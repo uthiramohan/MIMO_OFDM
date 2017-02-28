@@ -1,0 +1,123 @@
+
+function compute_symbol_error_rate_qam_ofdm_awgn()
+
+close all; figure
+EsN0dB 	= [0:33]; % symbol to noise ratio
+M 	= [16 64 256]; % 16QAM/64QAM and 256 QAM     
+	k      = sqrt(1/((2/3)*(M(1)-1))); 
+	simSer(1,:) = compute_symbol_error_rate(EsN0dB, M(1));
+	theorySer(1,:) = 2*(1-1/sqrt(M(1)))*erfc(k*sqrt((10.^(EsN0dB/10)))) ...
+	              - (1-2/sqrt(M(1)) + 1/M(1))*(erfc(k*sqrt((10.^(EsN0dB/10))))).^2;
+	semilogy(EsN0dB,theorySer(1,:),'b-');
+	hold on
+	semilogy(EsN0dB,simSer(1,:),'r*');
+
+	k      = sqrt(1/((2/3)*(M(2)-1))); 
+	simSer(2,:) = compute_symbol_error_rate(EsN0dB, M(2));
+	theorySer(2,:) = 2*(1-1/sqrt(M(2)))*erfc(k*sqrt((10.^(EsN0dB/10)))) ...
+	              - (1-2/sqrt(M(2)) + 1/M(2))*(erfc(k*sqrt((10.^(EsN0dB/10))))).^2;
+	semilogy(EsN0dB,theorySer(2,:),'r-');
+	hold on
+	semilogy(EsN0dB,simSer(2,:),'b*');
+
+	k      = sqrt(1/((2/3)*(M(3)-1))); 
+	simSer(3,:) = compute_symbol_error_rate(EsN0dB, M(3));
+	theorySer(3,:) = 2*(1-1/sqrt(M(3)))*erfc(k*sqrt((10.^(EsN0dB/10)))) ...
+	              - (1-2/sqrt(M(3)) + 1/M(3))*(erfc(k*sqrt((10.^(EsN0dB/10))))).^2;
+	semilogy(EsN0dB,theorySer(3,:),'r-');
+	hold on
+	semilogy(EsN0dB,simSer(3,:),'g*');
+
+axis([0 33 10^-5 1])
+grid on
+legend('theory-16QAM', 'sim-16QAM', 'theory-64QAM', 'sim-64QAM', 'theory-256QAM', 'sim-256QAM','Location','Southwest');
+xlabel('Es/No, dB')
+ylabel('Symbol Error Rate')
+title('SNR vs BER for 16QAM/64QAM/256QAM MIMO OFDM over AWGN');
+return ;
+
+function [simSer] = compute_symbol_error_rate(EsN0dB, M);
+
+% ofdm specifications
+nFFT = 64; % fft size
+nDSC = 52; % number of data subcarriers
+nConstperOFDMsym = 52; % number of bits per OFDM symbol (same as the number of subcarriers for BPSK)
+nOFDMsym = 10^4; % number of ofdm symbols
+
+% modulation 
+k = sqrt(1/((2/3)*(M-1))); % normalizing factor
+m = [1:sqrt(M)/2]; % alphabets
+alphaMqam = [-(2*m-1) 2*m-1]; 
+
+EsN0dB_eff = EsN0dB  + 10*log10(nDSC/nFFT) + 10*log10(64/80); % accounting for the used subcarriers and cyclic prefix
+
+for ii = 1:length(EsN0dB)
+
+   % Transmitter
+   ipMod = randsrc(1,nConstperOFDMsym*nOFDMsym,alphaMqam) + j*randsrc(1,nConstperOFDMsym*nOFDMsym,alphaMqam);
+   ipMod_norm = k*reshape(ipMod,nConstperOFDMsym,nOFDMsym).'; % grouping into multiple symbolsa
+
+   % Assigning modulated symbols to subcarriers from [-26 to -1, +1 to +26]
+   xF = [zeros(nOFDMsym,6) ipMod_norm(:,[1:nConstperOFDMsym/2]) zeros(nOFDMsym,1) ipMod_norm(:,[nConstperOFDMsym/2+1:nConstperOFDMsym]) zeros(nOFDMsym,5)] ;
+   
+   % Taking FFT, the term (nFFT/sqrt(nDSC)) is for normalizing the power of transmit symbol to 1 
+   xt = (nFFT/sqrt(nDSC))*ifft(fftshift(xF.')).';
+
+   % Appending cylic prefix
+   xt = [xt(:,[49:64]) xt];
+
+   % Concatenating multiple symbols to form a long vector
+   xt = reshape(xt.',1,nOFDMsym*80);
+
+   % Gaussian noise of unit variance, 0 mean
+   nt = 1/sqrt(2)*[randn(1,nOFDMsym*80) + j*randn(1,nOFDMsym*80)];
+
+   % Adding noise, the term sqrt(80/64) is to account for the wasted energy due to cyclic prefix
+   yt = sqrt(80/64)*xt + 10^(-EsN0dB_eff(ii)/20)*nt;
+
+   % Receiver
+   yt = reshape(yt.',80,nOFDMsym).'; % formatting the received vector into symbols
+   yt = yt(:,[17:80]); % removing cyclic prefix
+
+   % converting to frequency domain
+   yF = (sqrt(nDSC)/nFFT)*fftshift(fft(yt.')).'; 
+   yMod = sqrt(64/80)*yF(:,[6+[1:nConstperOFDMsym/2] 7+[nConstperOFDMsym/2+1:nConstperOFDMsym] ]); 
+
+   % demodulation
+   y_re = real(yMod)/k;
+   y_im = imag(yMod)/k;
+   % rounding to the nearest alphabet
+   % 0 to 2 --> 1
+   % 2 to 4 --> 3
+   % 4 to 6 --> 5 etc
+   ipHat_re = 2*floor(y_re/2)+1;
+   ipHat_re(find(ipHat_re>max(alphaMqam))) = max(alphaMqam);
+   ipHat_re(find(ipHat_re<min(alphaMqam))) = min(alphaMqam);
+            
+   % rounding to the nearest alphabet
+   % 0 to 2 --> 1
+   % 2 to 4 --> 3
+   % 4 to 6 --> 5 etc
+   ipHat_im = 2*floor(y_im/2)+1;
+   ipHat_im(find(ipHat_im>max(alphaMqam))) = max(alphaMqam);
+   ipHat_im(find(ipHat_im<min(alphaMqam))) = min(alphaMqam);
+    
+   ipHat = ipHat_re + j*ipHat_im; 
+
+   % converting to vector 
+   ipHat_v = reshape(ipHat.',nConstperOFDMsym*nOFDMsym,1).';
+
+   % counting the errors
+   nErr(ii) = size(find(ipMod - ipHat_v ),2);
+
+end
+simSer = nErr/(nOFDMsym*nConstperOFDMsym);
+
+return;
+
+
+
+
+
+
+

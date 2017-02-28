@@ -1,0 +1,66 @@
+
+    M = 8;                 % Modulation alphabet
+    k = log2(M);           % Bits/symbol
+    numSC = 128;           % Number of OFDM subcarriers
+    cpLen = 32;            % OFDM cyclic prefix length
+    maxBitErrors = 100;    % Maximum number of bit errors
+    maxNumBits = 1e7;      % Maximum number of bits transmitted
+
+    hQPSKMod = comm.DPSKModulator('BitInput',true);
+    hQPSKDemod = comm.DPSKDemodulator('BitOutput',true);
+
+    hOFDMmod = comm.OFDMModulator('FFTLength',numSC,'CyclicPrefixLength',cpLen);
+    hOFDMdemod = comm.OFDMDemodulator('FFTLength',numSC,'CyclicPrefixLength',cpLen);
+
+    hChan = comm.AWGNChannel('NoiseMethod','Variance', ...
+        'VarianceSource','Input port');
+
+    hError = comm.ErrorRate('ResetInputPort',true);
+
+ 
+    ofdmInfo = info(hOFDMmod)
+    
+    numDC = ofdmInfo.DataInputSize(1)
+   
+    frameSize = [k*numDC 1];
+
+   
+    EbNoVec = (0:10)';
+    snrVec = EbNoVec + 10*log10(k) + 10*log10(numDC/numSC);
+   
+    berVec = zeros(length(EbNoVec),3);
+    errorStats = zeros(1,3);
+    
+    for m = 1:length(EbNoVec)
+        snr = snrVec(m);
+
+        while errorStats(2) <= maxBitErrors && errorStats(3) <= maxNumBits
+            dataIn = randi([0,1],frameSize);              % Generate binary data
+            qpskTx = step(hQPSKMod,dataIn);               % Apply QPSK modulation
+            txSig = step(hOFDMmod,qpskTx);                % Apply OFDM modulation
+            powerDB = 10*log10(var(txSig));               % Calculate Tx signal power
+            noiseVar = 10.^(0.1*(powerDB-snr));           % Calculate the noise variance
+            rxSig = step(hChan,txSig,noiseVar);           % Pass the signal through a noisy channel
+            qpskRx = step(hOFDMdemod,rxSig);              % Apply OFDM demodulation
+            dataOut = step(hQPSKDemod,qpskRx);            % Apply QPSK demodulation
+            errorStats = step(hError,dataIn,dataOut,0);   % Collect error statistics
+        end
+
+        berVec(m,:) = errorStats;                         % Save BER data
+        errorStats = step(hError,dataIn,dataOut,1);       % Reset the error rate calculator
+    end
+   
+    berTheory = berawgn(EbNoVec,'dpsk',M,'nondiff');
+
+  
+    figure
+    semilogy(EbNoVec,berVec(:,1),'*')
+    hold on
+    semilogy(EbNoVec,berTheory)
+    legend('Simulation','Theory','Location','Best')
+    title('SNR vs BER for 8-DPSK MIMO OFDM over AWGN')
+    xlabel('Eb/No (dB)')
+    ylabel('Bit Error Rate')
+    grid on
+    hold off
+    
